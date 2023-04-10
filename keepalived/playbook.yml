@@ -1,0 +1,92 @@
+---
+- name: Keepalived X Haproxy
+  hosts: all
+  become: true
+  become_method: sudo
+  vars:
+    - ip_virtual: 192.168.200.30
+    - ip_lb1: 192.168.200.31
+    - ip_lb2: 192.168.200.32
+    - interface: "{{ ansible_default_ipv4.interface }}"
+    - ip_master1: 192.168.200.21
+    - ip_master2: 192.168.200.22
+    - ip_master3: 192.168.200.23
+  tasks:
+    - name: Update and upgrade apt packages
+      ansible.builtin.apt:
+        upgrade: 'yes'
+        state: present
+        update_cache: true
+        cache_valid_time: 86400
+
+    - name: Set timezone
+      ansible.builtin.timezone:
+        name: Asia/Jakarta
+
+    - name: Install required packages
+      ansible.builtin.apt:
+        state: present
+        update_cache: true
+        pkg:
+          - keepalived
+          - haproxy
+          - chrony
+          - net-tools
+      notify: Restart chrony
+
+    - name: Enable IP forwarding
+      ansible.builtin.copy:
+        src: keepalived.conf
+        dest: "/etc/sysctl.d/keepalived.conf"
+        mode: 0644
+        backup: true
+      notify: Reload sysctl
+
+    - name: Create keepalived.conf for keepalived1
+      ansible.builtin.template:
+        src: keepalived01.conf
+        dest: /etc/keepalived/keepalived.conf
+        mode: 0644
+        backup: true
+      when: inventory_hostname == 'Keepalived1'
+      notify: Restart keepalived
+
+    - name: Create keepalived.conf for keepalived2
+      ansible.builtin.template:
+        src: keepalived02.conf
+        dest: /etc/keepalived/keepalived.conf
+        mode: 0644
+        backup: true
+      when: inventory_hostname == 'Keepalived2'
+      notify: Restart keepalived
+
+    - name: Create haproxy.cfg file
+      ansible.builtin.template:
+        src: haproxy.cfg
+        dest: /etc/haproxy/haproxy.cfg
+        mode: 0644
+        backup: true
+      notify: Restart haproxy
+
+  handlers:
+    - name: Restart chrony
+      ansible.builtin.service:
+        name: chrony
+        state: restarted
+        enabled: true
+
+    - name: Reload sysctl
+      ansible.builtin.command: sysctl --system
+
+    - name: Restart keepalived
+      ansible.builtin.service:
+        name: keepalived
+        state: restarted
+        enabled: true
+
+    - name: Restart haproxy
+      ansible.builtin.service:
+        name: haproxy
+        state: restarted
+        enabled: true
+...

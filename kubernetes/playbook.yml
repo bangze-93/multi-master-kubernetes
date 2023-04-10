@@ -1,0 +1,161 @@
+---
+- name: Kubernetes Cluster
+  hosts: all
+  become: true
+  become_method: sudo
+  vars:
+    - kube_version: 1.25.8-00
+    - endpoint_ip: 192.168.200.30
+    - network_cidr: 10.3.4.0/16
+  tasks:
+
+    - name: Update and upgrade apt packages
+      ansible.builtin.apt:
+        upgrade: 'yes'
+        state: present
+        update_cache: true
+        cache_valid_time: 86400
+
+    - name: Set timezone
+      ansible.builtin.timezone:
+        name: Asia/Jakarta
+
+    - name: Create keyrings directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Add docker apt-key
+      ansible.builtin.apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        keyring: /etc/apt/keyrings/docker.gpg
+        state: present
+
+    - name: Add docker apt-repository
+      ansible.builtin.apt_repository:
+        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        filename: docker
+        state: present
+
+    - name: Add kubernetes apt-key
+      ansible.builtin.apt_key:
+        url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+        keyring: /etc/apt/keyrings/kubernetes.gpg
+        state: present
+
+    - name: Add kubernetes apt-repository
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/etc/apt/keyrings/kubernetes.gpg] https://apt.kubernetes.io/ kubernetes-xenial main"
+        filename: kubernetes
+        state: present
+
+    - name: Install required packages
+      ansible.builtin.apt:
+        pkg:
+          - docker.io
+          - kubeadm={{ kube_version }}
+          - kubectl={{ kube_version }}
+          - kubelet={{ kube_version }}
+          - apt-transport-https
+          - ca-certificates
+          - software-properties-common
+          - gnupg2
+          - chrony
+        state: present
+        update_cache: true
+
+    - name: Hold kubeadm, kubectl, kubelet to be updated
+      ansible.builtin.dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop:
+        - kubeadm
+        - kubelet
+        - kubectl
+
+    - name: Change docker cgroup driver to systemd
+      ansible.builtin.copy:
+        src: daemon.json
+        dest: /etc/docker/daemon.json
+        mode: 0644
+      notify:
+        - Reload daemon
+        - Restart docker and chrony
+
+    - name: Enable IP forwarding
+      ansible.builtin.copy:
+        src: kubernetes.conf
+        dest: /etc/sysctl.d/kubernetes.conf
+        mode: 0644
+      notify: Reload sysctl
+
+    - name: Add the overlay and br_netfilter module
+      ansible.builtin.copy:
+        src: k8s.conf
+        dest: /etc/modules-load.d/k8s.conf
+        mode: 0644
+      notify: Load modules
+
+    - name: Disable swap in /etc/fstab
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^([^#].*?\sswap\s+sw\s+.*)$'
+        replace: '# \1'
+      notify: Disable swap
+
+    - name: Flush handlers
+      meta: flush_handlers
+
+    - name: Initialize first master
+      ansible.builtin.shell: |
+        kubeadm init --pod-network-cidr="{{ network_cidr }}" --control-plane-endpoint="{{ endpoint_ip }}:6443" \
+        --apiserver-advertise-address="{{ ansible_default_ipv4.address }}" --upload-certs
+      register: join_key
+      when: inventory_hostname == 'Master1'
+
+    - name: Get join key
+      ansible.builtin.debug:
+        var: join_key.stdout
+      when: inventory_hostname == 'Master1'
+
+    - name: Copy config kubernetes to user home directory
+      ansible.builtin.script: script.sh
+      when: inventory_hostname == 'Master1'
+
+    - name: Install Calico networking and network policy
+      ansible.builtin.command: kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.25.1/manifests/calico.yaml
+      register: output_calico
+      when: inventory_hostname == 'Master1'
+
+    - name: Show process of installing calico
+      ansible.builtin.debug:
+        var: output_calico.stdout
+      when: inventory_hostname == 'Master1'
+
+  handlers:
+    - name: Reload daemon
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart docker and chrony
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: restarted
+        enabled: true
+      loop:
+        - docker
+        - chrony
+
+    - name: Reload sysctl
+      ansible.builtin.command: sysctl --system
+
+    - name: Load modules
+      ansible.builtin.command: modprobe "{{ item }}"
+      loop:
+        - overlay
+        - br_netfilter
+
+    - name: Disable swap
+      ansible.builtin.command: swapoff -a
+...

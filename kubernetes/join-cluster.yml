@@ -1,0 +1,26 @@
+---
+- name: Join to Kubernetes Cluster
+  hosts: all
+  become: true
+  become_method: sudo
+  vars:
+    - endpoint_ip: 192.168.200.30
+  tasks:
+
+    - name: Join for master
+      ansible.builtin.shell: |
+        kubeadm join {{ endpoint_ip }}:6443 --token 12ytci.c0elqb4mxpowvnpn \
+            --discovery-token-ca-cert-hash sha256:6d77b7a8c233d134cb0e027d0dbc8bd7956fca660d486e5dcd92ce6b33f09928 \
+            --control-plane --certificate-key 59c605a446bf25923031153baa6463e1a05559aa857bce7baac150c87b62c515
+      when: inventory_hostname in groups['master'] and inventory_hostname != 'Master1'
+
+    - name: Copy config kubernetes to user home directory
+      ansible.builtin.script: script.sh
+      when: inventory_hostname in groups['master'] and inventory_hostname != 'Master1'
+
+    - name: Join for worker
+      ansible.builtin.shell: |
+        kubeadm join {{ endpoint_ip }}:6443 --token 12ytci.c0elqb4mxpowvnpn \
+            --discovery-token-ca-cert-hash sha256:6d77b7a8c233d134cb0e027d0dbc8bd7956fca660d486e5dcd92ce6b33f09928
+      when: inventory_hostname in groups['worker']
+...
