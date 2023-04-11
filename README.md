@@ -1,4 +1,4 @@
-## Deploy multi master Kubernetes cluster using Ansible
+## Deploy multi master Kubernetes cluster using Ansible on Ubuntu 20
 This Kubernetes cluster use Keepalived for High Availability (HA)
 ##### Kubernetes master
 - master1 : 192.168.200.21
